@@ -13,4 +13,5 @@ MANIFEST
 .coverage
 .cache
 *.csv
+metadata/
 

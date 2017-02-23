@@ -1,6 +1,6 @@
-# Landsat8 Metadata Generator
+# Hyperion Metadata Generator
 
-This small library helps with generating landsat 8 metadata and upload it to Amazon S3 and/or ElasticSearch
+This small library helps with generating EO-1 Hyperion metadata and upload it to Amazon S3 and/or ElasticSearch
 
 ## Installation
 
@@ -31,5 +31,18 @@ Example:
 
     $ python main.py s3 es --start='2016-01-01' --verbose
 
+## ENVS
+
+Elastic Search Envs
+	ES_HOST
+	ES_PORT
+
+S3 bucket
+	BUCKETNAME
+
 ## About
-The Landsat8 Metadata Generator was made by [Development Seed](http://developmentseed.org).
+The EO-1 Hyperion Metadata Generator was inspired by the Landsat8 Metadata Generator, made by [Development Seed](http://developmentseed.org).
+
+## Delete Index
+```
+    $ curl -XDELETE $ES_HOST/sat-api

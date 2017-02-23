@@ -10,11 +10,11 @@ from elasticsearch import Elasticsearch, RequestError
 
 from reader import csv_reader
 
-logger = logging.getLogger('landsat8.meta')
-bucket_name = os.getenv('BUCKETNAME', 'landsat8-meta')
-s3 = boto3.resource('s3')
-es_index = 'sat-api'
-es_type = 'landsat8'
+logger      = logging.getLogger('hyperion.meta')
+bucket_name = os.getenv('BUCKETNAME', 'hyperion-meta')
+s3          = boto3.resource('s3')
+es_index    = 'sat-api'
+es_type     = 'hyperion'
 
 
 def create_index(index_name, doc_type):
@@ -42,7 +42,20 @@ def create_index(index_name, doc_type):
         index=index_name
     )
 
+def convert_date(value):
+    dt      = value.split(' ')[0]
+    arr     = dt.split('/')
+    year    = int(arr[2])+2000
+    month   = int(arr[0])
+    day     = int(arr[1])
+    
+    datestr = "%d-%02d-%02d" % (year, month, day)    
+    return datestr
 
+def convert_SceneName(value):
+    scene = value.split('_')
+    return scene[0]
+    
 def meta_constructor(metadata):
     internal_meta = copy(metadata)
 
@@ -55,20 +68,22 @@ def meta_constructor(metadata):
             }
         },
         'coordinates': [[
-            [metadata.get('upperRightCornerLongitude'), metadata.get('upperRightCornerLatitude')],
-            [metadata.get('upperLeftCornerLongitude'), metadata.get('upperLeftCornerLatitude')],
-            [metadata.get('lowerLeftCornerLongitude'), metadata.get('lowerLeftCornerLatitude')],
-            [metadata.get('lowerRightCornerLongitude'), metadata.get('lowerRightCornerLatitude')],
-            [metadata.get('upperRightCornerLongitude'), metadata.get('upperRightCornerLatitude')]
+            [metadata.get('CornerLo_1'), metadata.get('CornerLa_1')],
+            [metadata.get('CornerLonU'), metadata.get('CornerLatU')],
+            [metadata.get('CornerLonL'), metadata.get('CornerLatL')],
+            [metadata.get('CornerLo_2'), metadata.get('CornerLa_2')],
+            [metadata.get('CornerLo_1'), metadata.get('CornerLa_1')]
         ]]
     }
-
+    
+    dt = convert_date(metadata.get('SceneDate'))
+    
     body = OrderedDict([
-        ('scene_id', metadata.get('sceneID')),
-        ('satellite_name', 'landsat-8'),
-        ('cloud_coverage', metadata.get('cloudCoverFull', 100)),
-        ('date', metadata.get('acquisitionDate')),
-        ('thumbnail', metadata.get('browseURL')),
+        ('scene_id', convert_SceneName(metadata.get('SceneName'))),
+        ('satellite_name', 'eo1'),
+        ('cloud_coverage', metadata.get('MaxCloudCo')),
+        ('date', dt),
+        ('thumbnail', "https://earthexplorer.usgs.gov/browse/eo-1/hyp/" + metadata.get('BrowseImag')),
         ('data_geometry', data_geometry)
     ])
 
@@ -85,12 +100,10 @@ def elasticsearch_updater(product_dir, metadata):
         logger.info('Pushing to Elasticsearch')
 
         try:
-            es.index(index=es_index, doc_type=es_type, id=body['scene_id'],
-                     body=body)
+            es.index(index=es_index, doc_type=es_type, id=body['scene_id'], body=body)
         except RequestError as e:
             body['data_geometry'] = None
-            es.index(index=es_index, doc_type=es_type, id=body['scene_id'],
-                     body=body)
+            es.index(index=es_index, doc_type=es_type, id=body['scene_id'], body=body)
 
     except Exception as e:
         logger.error('Unhandled error occured while writing to elasticsearch')
@@ -98,6 +111,8 @@ def elasticsearch_updater(product_dir, metadata):
 
 
 def file_writer(product_dir, metadata):
+    print "file_writer", product_dir
+    
     body = meta_constructor(metadata)
 
     if not os.path.exists(product_dir):
@@ -110,6 +125,7 @@ def file_writer(product_dir, metadata):
 
 
 def s3_writer(product_dir, metadata):
+    print "s3_writer", bucket_name
     # make sure product_dir doesn't start with slash (/) or dot (.)
     if product_dir.startswith('.'):
         product_dir = product_dir[1:]
@@ -122,7 +138,7 @@ def s3_writer(product_dir, metadata):
     key = os.path.join(product_dir, body['scene_id'] + '.json')
     s3.Object(bucket_name, key).put(Body=json.dumps(body), ACL='public-read', ContentType='application/json')
 
-    logger.info('saving to s3 at %s')
+    logger.info('saving to s3 at %s', key)
 
 
 def last_updated(today):
@@ -164,10 +180,10 @@ def last_updated(today):
 
 @click.command()
 @click.argument('ops', metavar='<operations: choices: s3 | es | disk>', nargs=-1)
-@click.option('--start', default=None, help='Start Date. Format: YYYY-MM-DD')
-@click.option('--end', default=None, help='End Date. Format: YYYY-MM-DD')
-@click.option('--es-host', default='localhost', help='Elasticsearch host address')
-@click.option('--es-port', default=9200, type=int, help='Elasticsearch port number')
+@click.option('--start', default=None, help='Start Date. Format: MM/DD/YY')
+@click.option('--end', default=None, help='End Date. Format: MM/DD/YY')
+#@click.option('--es-host', default='localhost', help='Elasticsearch host address')
+#@click.option('--es-port', default=9200, type=int, help='Elasticsearch port number')
 @click.option('--folder', default='.', help='Destination folder if is written to disk')
 @click.option('--download', is_flag=True,
               help='Sets the updater to download the metadata file first instead of streaming it')
@@ -175,7 +191,11 @@ def last_updated(today):
               help='The folder to save the downloaded metadata to. Defaults to a temp folder')
 @click.option('-v', '--verbose', is_flag=True)
 @click.option('--concurrency', default=20, type=int, help='Process concurrency. Default=20')
-def main(ops, start, end, es_host, es_port, folder, download, download_folder, verbose, concurrency):
+
+# python main.py es s3 disk folder ./metadata --start 01/01/03 -v
+# python main.py disk --folder ./metadata --start 01/01/03 -v
+
+def main(ops, start, end, folder, download, download_folder, verbose, concurrency):
 
     if not ops:
         raise click.UsageError('No Argument provided. Use --help if you need help')
@@ -207,6 +227,11 @@ def main(ops, start, end, es_host, es_port, folder, download, download_folder, v
 
     if 'es' in ops:
         global es
+        
+        es_port = os.getenv('ES_PORT', 80)
+        es_host = os.getenv('ES_HOST', "NOT_AVAILABLE")
+        
+        logger.info("Connecting to Elastic Search %s:%d", es_host, es_port)
         es = Elasticsearch([{
             'host': es_host,
             'port': es_port
@@ -217,11 +242,12 @@ def main(ops, start, end, es_host, es_port, folder, download, download_folder, v
     if not start and not end:
         delta = timedelta(days=3)
         start = date.today() - delta
-        start = '{0}-{1}-{2}'.format(start.year, start.month, start.day)
+        start = '{0}/{1}/{2}'.format(start.month, start.day,start.year-2000)
 
     csv_reader(folder, writers, start_date=start, end_date=end, download=download, download_path=download_folder,
                num_worker_threads=concurrency)
 
+    
 
 if __name__ == '__main__':
     main()
