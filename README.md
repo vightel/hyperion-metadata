@@ -16,8 +16,6 @@ This small library helps with generating EO-1 Hyperion metadata and upload it to
     Options:
       --start TEXT            Start Date. Format: YYYY-MM-DD
       --end TEXT              End Date. Format: YYYY-MM-DD
-      --es-host TEXT          Elasticsearch host address
-      --es-port INTEGER       Elasticsearch port number
       --folder TEXT           Destination folder if is written to disk
       --download              Sets the updater to download the metadata file first
                               instead of streaming it
@@ -31,18 +29,23 @@ Example:
 
     $ python main.py s3 es --start='2016-01-01' --verbose
 
-## ENVS
+## Enviroment Variables
 
-Elastic Search Envs
+Elastic Search Environment Variables
+
 	ES_HOST
 	ES_PORT
 
-S3 bucket
+S3 bucket:
+
 	BUCKETNAME
+
+## CSV
+Hyperion.csv
 
 ## About
 The EO-1 Hyperion Metadata Generator was inspired by the Landsat8 Metadata Generator, made by [Development Seed](http://developmentseed.org).
 
-## Delete Index
+## To Delete Index
 ```
     $ curl -XDELETE $ES_HOST/sat-api

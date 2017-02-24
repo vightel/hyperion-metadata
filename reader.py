@@ -3,6 +3,7 @@ import time
 import logging
 import requests
 import csv
+from time import strftime
 
 from concurrent import futures
 from datetime import datetime
@@ -38,14 +39,14 @@ def download_meta(url, download_path):
 
 def row_processor(record, date, dst, writers):
 
-    path = os.path.join(dst, str(date.year), str(date.month), str(date.day))
+    path = os.path.join(dst, str(date.year), date.strftime("%j"))
 
     logger.info('processing %s' % record['SceneName'])
     for w in writers:
         w(path, record)
 
 
-def csv_reader(dst, writers, start_date=None, end_date=None, url=None,
+def csv_reader(fname, dst, writers, start_date=None, end_date=None, url=None,
                download=False, download_path=None, num_worker_threads=1):
     """ Reads hyperion metadata from a csv file stored on USGS servers
     and applys writer functions on the data """
@@ -67,7 +68,7 @@ def csv_reader(dst, writers, start_date=None, end_date=None, url=None,
     #    r = requests.get(url, stream=True)
     #    liner = r.iter_lines
 	
-    liner = csv.reader(open('./Hyperion.csv', 'rb'))
+    liner = csv.reader(open(fname, 'rb'))
     
     print start_date, end_date
     
