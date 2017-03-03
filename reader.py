@@ -11,8 +11,7 @@ from homura import download as fetch
 from tempfile import mkdtemp
 from collections import OrderedDict
 
-logger = logging.getLogger('landsat8.meta')
-
+logger = logging.getLogger('hyperion.meta')
 
 class ReachedEndOfProcess(Exception):
     pass

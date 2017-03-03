@@ -1,22 +1,22 @@
-import os
-import json
-import boto3
-import click
-import logging
+import os, sys, json, logging, boto3, click
+
 from copy import copy
 from collections import OrderedDict
 from datetime import date, timedelta
 from elasticsearch import Elasticsearch, RequestError
-
 from reader import csv_reader
+
+sys.path.append('../hyperion-l1u')
+import config
 
 logger      = logging.getLogger('hyperion.meta')
 bucket_name = os.getenv('BUCKETNAME', 'hyperion-meta')
 s3          = boto3.resource('s3')
+aws_s3_dir	= os.path.join("https://s3.amazonaws.com", bucket_name)
+
 es_index    = 'sat-api'
 es_type     = 'hyperion'
-
-aws_s3_dir	= os.path.join("https://s3.amazonaws.com", bucket_name)
+host_url    = "http://hyperion-api.herokuapp.com"
 
 def create_index(index_name, doc_type):
     
@@ -61,59 +61,60 @@ def meta_constructor(metadata):
     internal_meta = copy(metadata)
     
     data_geometry = {
-        'type': 'Polygon',
-        'crs': {
-            'type': 'name',
-            'properties': {
-                'name': 'urn:ogc:def:crs:EPSG:8.9:4326'
+        "type": "polygon",
+        "crs": {
+            "type": "name",
+            "properties": {
+                "name": "urn:ogc:def:crs:EPSG:8.9:4326"
             }
         },
-        'coordinates': [[
-            [metadata.get('CornerLo_1'), metadata.get('CornerLa_1')],
-            [metadata.get('CornerLonU'), metadata.get('CornerLatU')],
-            [metadata.get('CornerLonL'), metadata.get('CornerLatL')],
-            [metadata.get('CornerLo_2'), metadata.get('CornerLa_2')],
-            [metadata.get('CornerLo_1'), metadata.get('CornerLa_1')]
+        "coordinates": [[
+            [ metadata.get('CornerLonUpperLeft'),  metadata.get('CornerLatUpperLeft')],
+            [ metadata.get('CornerLonUpperRight'), metadata.get('CornerLatUpperRight')],
+            [ metadata.get('CornerLonLowerRight'), metadata.get('CornerLatLowerRight')],
+            [ metadata.get('CornerLonLowerLeft'),  metadata.get('CornerLatLowerLeft')],
+            [ metadata.get('CornerLonUpperLeft'),  metadata.get('CornerLatUpperLeft')]
         ]]
     }
-	
+
     dt 			= convert_date(metadata.get('SceneDate'))
     scene_id 	= convert_SceneName(metadata.get('SceneName'))
     year 		= scene_id[10:14]
     doy			= scene_id[14:17]
+
     l1u_geotiffs = []
     for b in range(242):
-        filename = os.path.join(aws_s3_dir, "L1U", year, doy, scene_id, scene_id+"_B%03d_L1U.TIF" % (b+1))
-        l1u_geotiffs.append( filename )
+        if config.bbl[b]:
+            filename = os.path.join(aws_s3_dir, "L1U", year, doy, scene_id, scene_id+"_B%03d_L1U.TIF" % (b+1))
+            l1u_geotiffs.append( { "band_%03d"%(b+1) : { "href" : filename} } )
 	
     actions = {
         "downloads": {
             "L1U": {
                 "ENVI.BIL": {
-                    "href": os.path.join(aws_s3_dir, "L1U", year, doy, scene_id, scene_id+".tar.gz")
+                    "href": os.path.join(aws_s3_dir, "L1U", year, doy, scene_id, scene_id+"_L1U.tar.gz")
                 },
                 "GEOTIFF": l1u_geotiffs
             }
         },
         "process": {
-            "rgb":  {"href": "http://hyperion-api/process?scene=%s&algorithm=rgb"%(scene_id+"_L1U")},
-            "ndvi": {"href": "http://hyperion-api/process?scene=%s&algorithm=ndvi"%(scene_id+"_L1U")},
-            "evi":  {"href": "http://hyperion-api/process?scene=%s&algorithm=evi"%(scene_id+"_L1U")}
+            "rgb":  {"href": "%s/eo1/process?scene=%s&algorithm=rgb"%(host_url, scene_id+"_L1U")},
+            "ndvi": {"href": "%s/eo1/process?scene=%s&algorithm=ndvi"%(host_url,scene_id+"_L1U")},
+            "evi":  {"href": "%s/eo1/process?scene=%s&algorithm=evi"%(host_url, scene_id+"_L1U")}
         }
     }
     
     body = OrderedDict([
         ('scene_id', scene_id),
         ('satellite_name', 'eo1'),
-        ('cloud_coverage', metadata.get('MaxCloudCo')),
+        ('cloud_coverage', metadata.get('MaxCloudCover')),
         ('date', dt),
-        ('thumbnail', "https://earthexplorer.usgs.gov/browse/eo-1/hyp/" + metadata.get('BrowseImag')),
+        ('thumbnail', "https://earthexplorer.usgs.gov/browse/eo-1/hyp/" + metadata.get('BrowseImageLocation')),
         ('data_geometry', data_geometry),
         ('actions', actions)
     ])
     
     body.update(internal_meta)
-    
     return body
 
 
@@ -123,16 +124,19 @@ def elasticsearch_updater(product_dir, metadata):
         body = meta_constructor(metadata)
         
         logger.info('Pushing to Elasticsearch')
-        
+		
         try:
             es.index(index=es_index, doc_type=es_type, id=body['scene_id'], body=body)
         except RequestError as e:
+            print "ES RequestError", e
+            print  body['data_geometry']
             body['data_geometry'] = None
             es.index(index=es_index, doc_type=es_type, id=body['scene_id'], body=body)
     
     except Exception as e:
         logger.error('Unhandled error occured while writing to elasticsearch')
         logger.error('Details: %s' % e.__str__())
+        logger.error('Error on line {}'.format(sys.exc_info()[-1].tb_lineno))
 
 
 def file_writer(product_dir, metadata):
@@ -218,9 +222,8 @@ def last_updated(today):
 @click.option('-v', '--verbose', is_flag=True)
 @click.option('--concurrency', default=20, type=int, help='Process concurrency. Default=20')
 
-# python main.py es s3 disk folder ./metadata --start 01/01/03 -v
-# python main.py disk --folder ./metadata --start 01/01/03 -v
-# python main.py disk --csv Hyperion_2 --folder ./metadata --start 01/01/03 -v
+# python main.py disk s3 es --csv Hyperion_3.csv --folder ../data/metadata --start 01/01/03 -v
+# python main.py disk --csv Hyperion_3.csv --folder ../data/metadata --start 01/01/03 -v
 
 def main(ops, csv, start, end, folder, download, download_folder, verbose, concurrency):
     
@@ -232,7 +235,7 @@ def main(ops, csv, start, end, folder, download, download_folder, verbose, concu
         's3': s3_writer,
         'disk': file_writer
     }
-    
+	
     writers = []
     for op in ops:
         if op in accepted_args.keys():
@@ -252,10 +255,12 @@ def main(ops, csv, start, end, folder, download, download_folder, verbose, concu
     ch.setFormatter(formatter)
     logger.addHandler(ch)
     
+    print "folder", folder, "csv", csv
+		
     if 'es' in ops:
         global es
         
-        es_port = os.getenv('ES_PORT', 80)
+        es_port = int(os.getenv('ES_PORT', 80))
         es_host = os.getenv('ES_HOST', "NOT_AVAILABLE")
         
         logger.info("Connecting to Elastic Search %s:%d", es_host, es_port)
