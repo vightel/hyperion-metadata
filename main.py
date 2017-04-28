@@ -2,7 +2,7 @@
 # Loads metadata in Elastic Search Server, S3 and Disk
 #
 
-import os, sys, json, logging, boto3, click
+import os, sys, json, logging, boto3, click, urllib2, math
 
 from copy import copy
 from collections import OrderedDict
@@ -91,116 +91,178 @@ def meta_constructor(metadata):
     year 		    = scene_id[10:14]
     doy			    = scene_id[14:17]
     
-    ipfs_l1u_dir	= os.path.join("/L1U", year, doy, scene_id)
-    ipfs_l1t_dir	= os.path.join("/L1T", year, doy, scene_id)
-    ipfs_l1s_dir	= os.path.join("/L1S", year, doy, scene_id)
+    if 'sources' in metadata:
+        sources = metadata['sources']
+    else:
+        ipfs_l1u_dir	= os.path.join("/L1U", year, doy, scene_id)
+        ipfs_l1t_dir	= os.path.join("/L1T", year, doy, scene_id)
+        ipfs_l1s_dir	= os.path.join("/L1S", year, doy, scene_id)
 
-    l1u_geotiffs = []
-    for b in range(242):
-        if config.bbl[b]:
-            basefilename	= scene_id+"_B%03d_L1U.TIF" % (b+1)
-            ipfs_l1u_path   = os.path.join(ipfs_l1u_dir,basefilename)
+        l1u_geotiffs = []
+        for b in range(242):
+            if config.bbl[b]:
+                basefilename	= scene_id+"_B%03d_L1U.TIF" % (b+1)
+                ipfs_l1u_path   = os.path.join(ipfs_l1u_dir,basefilename)
             
-            ipfs_l1u_meta 	= ipfs_api.files_stat(ipfs_l1u_path)
+                ipfs_l1u_meta 	= ipfs_api.files_stat(ipfs_l1u_path)
             
-            filename 		= os.path.join(aws_s3_dir, "L1U", year, doy, scene_id, basefilename)
-            l1u_geotiffs.append( {
-                "band_%03d"%(b+1) : {
+                filename 		= os.path.join(aws_s3_dir, "L1U", year, doy, scene_id, basefilename)
+                l1u_geotiffs.append( {
+                    "band_%03d"%(b+1) : {
+                        "size": 	ipfs_l1u_meta['Size'],
+                        "href" : 	filename,
+                        "torrent": 	filename+"?torrent",
+                        "ipfs": 	"/ipfs/" +ipfs_l1u_meta['Hash']
+                    }
+                })
+    
+        basefilename 	        = scene_id+"_L1U.tar.gz"
+        ipfs_l1u_path           = os.path.join(ipfs_l1u_dir,basefilename)
+        ipfs_l1u_meta 	        = ipfs_api.files_stat(ipfs_l1u_path)
+    
+        basefilename 	        = scene_id+"_L1S.tar.gz"
+        ipfs_l1s_path           = os.path.join(ipfs_l1s_dir,basefilename)
+        ipfs_l1s_meta 	        = ipfs_api.files_stat(ipfs_l1s_path)
+
+        basefilename 	        = scene_id+"_L1T.tar.gz"
+        ipfs_l1t_path           = os.path.join(ipfs_l1t_dir,basefilename)
+        ipfs_l1t_meta 	        = ipfs_api.files_stat(ipfs_l1t_path)
+     
+        l1s_meta_filename 	    = scene_id+"_L1S.json"
+        ipfs_l1s_meta_path      = os.path.join(ipfs_l1s_dir,l1s_meta_filename)
+        ipfs_l1s_meta_meta      = ipfs_api.files_stat(ipfs_l1s_meta_path)
+
+        l1t_meta_filename 	    = scene_id+"_L1T.json"
+        ipfs_l1t_meta_path      = os.path.join(ipfs_l1t_dir,l1t_meta_filename)
+        ipfs_l1t_meta_meta      = ipfs_api.files_stat(ipfs_l1t_meta_path)
+
+        # reset to L1U
+        basefilename 	        = scene_id+"_L1U.tar.gz"
+
+        sources =  [
+                {
+                    "scene_id": 		scene_id + "_L1T",
+                    "description": "Co-registered Radiometically Corrected Radiance",
+                    "source": 	"USGS",
+                    "attribution": "USGS",
+                    "license":	"??",
+                    "downloads": {
+                        "GEOTIFF": {
+                            "size": 	ipfs_l1t_meta['Size'],
+                            "href": 	os.path.join(aws_s3_dir, "L1T", year, doy, scene_id+"_L1T.tar.gz"),
+                            "torrent": 	os.path.join(aws_s3_dir, "L1T", year, doy, basefilename+"?torrent"),
+                            "ipfs": 	"/ipfs/"+ipfs_l1t_meta['Hash']
+                        },
+                        "METADATA": {
+                            "href": os.path.join(aws_s3_dir, "L1T", year, doy, scene_id+"_L1T.json"),
+                            "ipfs": 	"/ipfs/"+ipfs_l1t_meta_meta['Hash']
+                        }
+                    }
+                },
+                {
+                    "scene_id": 		scene_id + "_L1S",
+                    "description": "Atmospherically Corrected Radiance",
+                    "source": 	"GSFC - Code 610",
+                    "attribution": "<a href='https://www.researchgate.net/profile/Petya_Campbell'>Petya Campbell</a>",
+                    "license":	"<a href='https://creativecommons.org/publicdomain/zero/1.0/'>CCO</a>",
+                    "downloads": {
+                        "ENVI.BIL": {
+                            "size": 	ipfs_l1s_meta['Size'],
+                            "href": 	os.path.join(aws_s3_dir, "L1S", year, doy, scene_id+"_L1S.tar.gz"),
+                            "torrent": 	os.path.join(aws_s3_dir, "L1S", year, doy, scene_id+"?torrent"),
+                            "ipfs": 	"/ipfs/"+ipfs_l1s_meta['Hash']
+                        },
+                        "METADATA": {
+                            "href": 	os.path.join(aws_s3_dir, "L1S", year, doy, scene_id+"_L1S.json"),
+                            "ipfs": 	"/ipfs/"+ipfs_l1s_meta_meta['Hash']
+                        }
+                    }
+                }
+        ]
+    
+    if 'actions' in metadata:
+        actions = metadata['actions']
+    else:
+        actions = {
+            "downloads": {
+                "ENVI.BIL": {
                     "size": 	ipfs_l1u_meta['Size'],
-                    "href" : 	filename,
-                    "torrent": 	filename+"?torrent",
-                    "ipfs": 	"/ipfs/" +ipfs_l1u_meta['Hash']
-                }
-            })
-    
-    basefilename 	        = scene_id+"_L1U.tar.gz"
-    ipfs_l1u_path           = os.path.join(ipfs_l1u_dir,basefilename)
-    ipfs_l1u_meta 	        = ipfs_api.files_stat(ipfs_l1u_path)
-    
-    basefilename 	        = scene_id+"_L1S.tar.gz"
-    ipfs_l1s_path           = os.path.join(ipfs_l1s_dir,basefilename)
-    ipfs_l1s_meta 	        = ipfs_api.files_stat(ipfs_l1s_path)
-
-    basefilename 	        = scene_id+"_L1T.tar.gz"
-    ipfs_l1t_path           = os.path.join(ipfs_l1t_dir,basefilename)
-    ipfs_l1t_meta 	        = ipfs_api.files_stat(ipfs_l1t_path)
-     
-    l1s_meta_filename 	    = scene_id+"_L1S.json"
-    ipfs_l1s_meta_path      = os.path.join(ipfs_l1s_dir,l1s_meta_filename)
-    ipfs_l1s_meta_meta      = ipfs_api.files_stat(ipfs_l1s_meta_path)
-
-    l1t_meta_filename 	    = scene_id+"_L1T.json"
-    ipfs_l1t_meta_path      = os.path.join(ipfs_l1t_dir,l1t_meta_filename)
-    ipfs_l1t_meta_meta      = ipfs_api.files_stat(ipfs_l1t_meta_path)
-     
-    sources =  [
-            {
-                "name": 		scene_id + "_L1T",
-                "description": "Co-registered Radiometically Corrected Radiance",
-                "source": 	"USGS",
-                "attribution": "USGS",
-                "license":	"??",
-                "downloads": {
-                    "GEOTIFF": {
-                        "size": 	ipfs_l1t_meta['Size'],
-                        "href": 	os.path.join(aws_s3_dir, "L1T", year, doy, scene_id+"_L1T.tar.gz"),
-                        "torrent": 	os.path.join(aws_s3_dir, "L1U", year, doy, basefilename+"?torrent"),
-                        "ipfs": 	"/ipfs/"+ipfs_l1t_meta['Hash']
-                    },
-                    "METADATA": {
-                        "href": os.path.join(aws_s3_dir, "L1T", year, doy, scene_id+"_L1T.json"),
-                        "ipfs": 	"/ipfs/"+ipfs_l1t_meta_meta['Hash']
-                    }
-                }
+                    "href": 	os.path.join(aws_s3_dir, "L1U", year, doy, scene_id, basefilename),
+                    "torrent": 	os.path.join(aws_s3_dir, "L1U", year, doy, scene_id, basefilename+"?torrent"),
+                    "ipfs": 	"/ipfs/"+ipfs_l1u_meta['Hash']
+                },
+                "GEOTIFF": 	l1u_geotiffs,
+                "METADATA": os.path.join(aws_s3_dir, "L1U", year, doy, scene_id, scene_id+"_L1U.json")
             },
-            {
-                "name": 		scene_id + "_L1S",
-                "description": "Atmospherically Corrected Radiance",
-                "source": 	"GSFC - Code 610",
-                "attribution": "<a href='https://www.researchgate.net/profile/Petya_Campbell'>Petya Campbell</a>",
-                "license":	"<a href='https://creativecommons.org/publicdomain/zero/1.0/'>CCO</a>",
-                "downloads": {
-                    "ENVI.BIL": {
-                        "size": 	ipfs_l1s_meta['Size'],
-                        "href": 	os.path.join(aws_s3_dir, "L1S", year, doy, scene_id+"_L1S.tar.gz"),
-                        "torrent": 	os.path.join(aws_s3_dir, "L1U", year, doy, scene_id+"?torrent"),
-                        "ipfs": 	"/ipfs/"+ipfs_l1s_meta['Hash']
-                    },
-                    "METADATA": {
-                        "href": 	os.path.join(aws_s3_dir, "L1S", year, doy, scene_id+"_L1S.json"),
-                        "ipfs": 	"/ipfs/"+ipfs_l1s_meta_meta['Hash']
-                    }
-                }
+            "process": {
+                "rgb":  {"href": "%s/eo1/process?scene=%s&algorithm=rgb"%(host_url, scene_id+"_L1U")},
+                "ndvi": {"href": "%s/eo1/process?scene=%s&algorithm=ndvi"%(host_url,scene_id+"_L1U")},
+                "evi":  {"href": "%s/eo1/process?scene=%s&algorithm=evi"%(host_url, scene_id+"_L1U")}
             }
-    ]
-    
-    actions = {
-        "downloads": {
-            "ENVI.BIL": {
-                "size": 	ipfs_l1u_meta['Size'],
-                "href": 	os.path.join(aws_s3_dir, "L1U", year, doy, scene_id, basefilename),
-                "torrent": 	os.path.join(aws_s3_dir, "L1U", year, doy, scene_id, basefilename+"?torrent"),
-                "ipfs": 	"/ipfs/"+ipfs_l1u_meta['Hash']
-            },
-            "GEOTIFF": 	l1u_geotiffs,
-            "METADATA": os.path.join(aws_s3_dir, "L1U", year, doy, scene_id, scene_id+"_L1U.json")
-        },
-        "process": {
-            "rgb":  {"href": "%s/eo1/process?scene=%s&algorithm=rgb"%(host_url, scene_id+"_L1U")},
-            "ndvi": {"href": "%s/eo1/process?scene=%s&algorithm=ndvi"%(host_url,scene_id+"_L1U")},
-            "evi":  {"href": "%s/eo1/process?scene=%s&algorithm=evi"%(host_url, scene_id+"_L1U")}
         }
-    }
     
     lat= float(metadata.get('CenterLat'))
     lon= float(metadata.get('CenterLon'))
+
+    
+    # Check centerlat, centerlon and elevation
+    pclat = float(metadata.get('CornerLatUpperLeft')) + float(metadata.get('CornerLatUpperRight')) + float(metadata.get('CornerLatLowerRight')) + float(metadata.get('CornerLatLowerLeft'))
+    pclat /= 4.0
+
+    pclon = float(metadata.get('CornerLonUpperLeft')) + float(metadata.get('CornerLonUpperRight')) + float(metadata.get('CornerLonLowerRight')) + float(metadata.get('CornerLonLowerLeft'))
+    pclon /= 4.0
+    
+    print "Getting lat, lon", lat, lon, pclat, pclon
+    YOUR_API_KEY    = os.environ['GOOGLE_API_KEY']
+    print "GKEy", YOUR_API_KEY
+    google_url      = "https://maps.googleapis.com/maps/api/elevation/json?locations=" + str(pclat) +","+ str(pclon) + "&key="+YOUR_API_KEY
+    print "Gogole url", google_url
+   
+    el_response 	= urllib2.urlopen(google_url).read()
+    el_data 		= json.loads(el_response)
+    results         = el_data["results"]
+    elevation       = results[0]["elevation"]
+    
+    #print results
+    #print results[0]["elevation"]
+    
+    internal_meta['centerLatitude']     = round(pclat,5)
+    internal_meta['centerLongitude']    = round(pclon,5)
+    internal_meta['centerElevation']    = round(elevation,0)
+    internal_meta['year']               = int( internal_meta['Year'])
+    internal_meta['dayOfYear']          = int( internal_meta['DayNum'])
+    internal_meta['scenePath']          = int( internal_meta['ScenePath'])
+    internal_meta['sceneRow']           = int( internal_meta['SceneRow'])
+    internal_meta['startTime']          = internal_meta['StartTime']
+    internal_meta['endTime']            = internal_meta['EndTime']
+    internal_meta['sceneDuration']      = internal_meta['SceneDuration']
+    internal_meta['sceneLength']        = internal_meta['SceneLength']
+    internal_meta['ReceivingStation']   = internal_meta['ReceivingStation']
+    internal_meta['requestorName']      = internal_meta['RequestorName']
+    internal_meta['dayOrNight']         = internal_meta['DayOrNight']
+    internal_meta['solarAzimuthAngle']  = internal_meta['SolarAzimuthAngle']
+    internal_meta['solarZenithAngle']   = internal_meta['SolarZenithAngle']
+    internal_meta['sensorLookAngle']   = internal_meta['SensorLookAngle']
+    internal_meta['satelliteInclination']   = internal_meta['SatelliteInclination']
+    internal_meta['sensorAltitude']     = 700
+    
+         
+    removed = ["MaxCloudCover",  "SceneTheme", "LandCoverType", "LandCoverDescription","RegionalLocation", "Location", "CalVal_SiteName",
+                "Comments", "TapeDirName", "BrowseImageLocation", "AeronetStationID", "AeronetStationDistance", "PopulationPerKM2",
+                "SceneCenterElevation", "AnthropogenicBiome", "SceneName", "SceneDate", "CenterLat", "CenterLon", "Year", "DayNum", "ScenePath", "SceneRow",
+                "SensorID", "StartTime", "EndTime", "CornerLatUpperLeft", "CornerLonUpperLeft", "CornerLatUpperRight", "CornerLonUpperRight",
+                "CornerLatLowerLeft", "CornerLonLowerLeft", "CornerLatLowerRight", "CornerLonLowerRight", "SceneDuration", "ReceivingStation",
+                "DayOrNight", "SceneLength","SolarAzimuthAngle","SolarZenithAngle", "SensorLookAngle", "SatelliteInclination", "RequestorName", "SensorAltitude"
+            ]
+    for r in removed:
+        del internal_meta[r]
     
     geonamesInfo = geonames.info(lat, lon)
-    
+    #print "geonamesInfo", geonamesInfo
+     
     body = OrderedDict([
-        ('name', 			scene_id+"_L1U"),
+        ('scene_id',        scene_id+"_L1U"),
         ('description', 	"EO-1 Hyperion GeoLocated Surface Reflectance Data"),
-        ('scene_id',        scene_id),
         ('satellite_name',  'eo1'),
         ('instrument',      'hyperion'),
         ('cloud_coverage',  metadata.get('MaxCloudCover')),
@@ -219,7 +281,7 @@ def meta_constructor(metadata):
         ('sources',         sources),
         ('actions',         actions)
     ])
-    
+    #print body
     body.update(internal_meta)
     return body
 
@@ -230,6 +292,7 @@ def elasticsearch_updater(product_dir, metadata):
         
         print 'Pushing to Elasticsearch', es_index, es_type, body['scene_id']
         del body['actions']
+        del body['sources']
         
         try:
             es.index(index=es_index, doc_type=es_type, id=body['scene_id'], body=body)
@@ -255,7 +318,7 @@ def file_writer(product_dir, metadata):
     if not os.path.exists(product_dir):
         os.makedirs(product_dir)
     
-    f = open(os.path.join(product_dir, body['scene_id'] + '_L1U.json'), 'w')
+    f = open(os.path.join(product_dir, body['scene_id'] + '.json'), 'w')
     f.write(json.dumps(body, indent=4, separators=(',',': ')))
     logger.info('saving to disk at %s' % product_dir)
     f.close()
@@ -273,8 +336,9 @@ def s3_writer(product_dir, metadata):
     scene_id 	= body['scene_id']
     year 		= scene_id[10:14]
     doy			= scene_id[14:17]
+    name        = scene_id.split("_")[0]
     
-    key = os.path.join('L1U', year, doy, body['scene_id'], body['scene_id'] + '_L1U.json')
+    key = os.path.join('L1U', year, doy, name, body['scene_id'] + '.json')
     s3.Object(bucket_name, key).put(Body=json.dumps(body), ACL='public-read', ContentType='application/json')
     
     logger.info('saving to s3 at %s %s', bucket_name, key)
@@ -331,11 +395,13 @@ def last_updated(today):
               help='The folder to save the downloaded metadata to. Defaults to a temp folder')
 @click.option('-v', '--verbose', is_flag=True)
 @click.option('--concurrency', default=20, type=int, help='Process concurrency. Default=20')
+@click.option('--product', default=None, help='Uploadproduct metadata')
 
 # python main.py disk s3 es --csv Hyperion_3.csv --folder ../data/L1U_metadata --start 01/01/03 -v
 # python main.py disk --csv Hyperion_3.csv --folder ../data/L1U_metadata --start 01/01/03 -v
+# python main.py es --product /Volumes/LaCie/EO1/DESTRIPE/2013/228/EO1H0110282013228110T3_DESTRIPE_B10_B11/EO1H0110282013228110T3_DESTRIPE_B10_B11.json -v
 
-def main(ops, csv, start, end, folder, download, download_folder, verbose, concurrency):
+def main(ops, csv, start, end, folder, download, download_folder, verbose, concurrency, product):
     global ipfs_api
     
     if not ops:
@@ -392,6 +458,23 @@ def main(ops, csv, start, end, folder, download, download_folder, verbose, concu
         start = date.today() - delta
         start = '{0}/{1}/{2}'.format(start.month, start.day,start.year-2000)
     
+    # Simple product upload
+    if product:
+        print "product", product
+        if not os.path.exists(product):
+            print "Product does not exist", product
+            
+        with open(product) as data:
+            json_data = json.load(data)
+            data.close()
+        #print json_data
+        logger.info('processing %s' % json_data['scene_id'])
+        for w in writers:
+            w(download_folder, json_data)
+        
+        print "Done"
+        sys.exit(0)
+        
     csv_reader(csv, folder, writers, start_date=start, end_date=end, download=download, download_path=download_folder,
                num_worker_threads=concurrency)
 
